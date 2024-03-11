@@ -3,6 +3,7 @@
 //! It provides a proof of code execution. When the user calls the `prove_output` method and passes in a piece of JavaScript code,
 //! the contract executes this code and outputs the execution result and the hash of the code as the result.
 
+#[macro_use]
 extern crate alloc;
 
 #[ink::contract]
@@ -16,7 +17,7 @@ mod proven {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     /// Struct representing the signed payload.
     pub struct ProvenPayload {
-        pub js_output: Vec<u8>,
+        pub js_output: String,
         pub js_code_hash: Hash,
         pub js_engine_code_hash: Hash,
         pub contract_code_hash: Hash,
@@ -59,50 +60,34 @@ mod proven {
         ///
         /// @ui js_code widget codemirror
         /// @ui js_code options.lang javascript
-        pub fn prove_output(
+        pub fn run_js(
             &self,
             js_code: String,
             args: Vec<String>,
         ) -> Result<ProvenOutput, String> {
+            use phat_js as js;
             let js_code_hash = self
                 .env()
                 .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes())
                 .into();
-            let code_hash_str = hex::encode(js_code_hash);
-            let caller = hex::encode(self.env().caller());
-            let address = hex::encode(self.env().account_id());
-            let block_number = self.env().block_number();
-            let block_time = self.env().block_timestamp();
-            let final_js_code = alloc::format!(
-                r#"globalThis.env = {{
-                       jsCodeHash: "0x{code_hash_str}",
-                       caller: "0x{caller}",
-                       address: "0x{address}",
-                       blockNumber: {block_number},
-                       blockTimestamp: {block_time},
-                   }};
-                {js_code}
-                "#
-            );
-            drop(js_code); // Drop the original js_code to save memory
-            let output = phat_js::eval(&final_js_code, &args)?;
+            let output = js::eval_async_js(&js_code, &args);
             let js_output = match output {
-                phat_js::Output::String(s) => s.into_bytes(),
-                phat_js::Output::Bytes(b) => b,
+                js::JsValue::String(s) => s,
+                _ => return Err(format!("Invalid output: {:?}", output)),
             };
             let key = self.key();
-            let js_delegate = SystemRef::instance()
-                .get_driver("JsDelegate".into())
-                .expect("Failed to get JsDelegate driver");
+            let driver = SystemRef::instance()
+                .get_driver("JsRuntime".into())
+                .expect("Failed to get Js driver");
             let payload = ProvenPayload {
-                js_output,
                 js_code_hash,
-                js_engine_code_hash: js_delegate.convert_to(),
+                js_engine_code_hash: driver.convert_to(),
                 contract_code_hash: self
                     .env()
                     .own_code_hash()
                     .expect("Failed to get contract code hash"),
                 contract_address: self.env().account_id(),
+                js_output,
                 block_number: self.env().block_number(),
             };
             let signature = pink::ext().sign(SigType::Sr25519, &key, &payload.encode());
@@ -114,8 +99,8 @@ mod proven {
         }
 
         #[ink(message)]
-        /// Same as prove_output except getting the code from given URL.
-        pub fn prove_output2(
+        /// Same as run_js except getting the code from given URL.
+        pub fn run_js_from_url(
             &self,
             code_url: String,
             args: Vec<String>,
@@ -128,7 +113,7 @@ mod proven {
                 return Err("Failed to get code".into());
             }
             let js_code = String::from_utf8(response.body).map_err(|_| "Invalid code")?;
-            self.prove_output(js_code, args)
+            self.run_js(js_code, args)
         }
     }
 
