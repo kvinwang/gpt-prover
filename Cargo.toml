@@ -20,6 +20,11 @@ scale-info = { version = "2.6", default-features = false, features = [
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 pink-json = { version = "0.4", default-features = false }
 
+[dev-dependencies]
+drink = "0.8"
+pink-drink = "0.1.4"
+tracing-subscriber = "0.3.18"
+
 [lib]
 path = "lib.rs"
 

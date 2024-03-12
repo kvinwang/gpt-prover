@@ -24,7 +24,7 @@ mod proven {
 
     impl<T: AsRef<[u8]>> Serialize for Hexed<T> {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            format_args!("0x{}", hex_fmt::HexFmt(&self.0)).serialize(serializer)
+            serializer.serialize_str(&format!("0x{}", hex::encode(self.0.as_ref())))
         }
     }
 
@@ -39,7 +39,7 @@ mod proven {
         block_number: u32,
     }
 
-    #[derive(Encode, Decode)]
+    #[derive(Encode, Decode, Debug)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     /// Struct representing the output of a proven execution.
     pub struct ProvenOutput {
@@ -136,6 +136,27 @@ mod proven {
         /// Returns the key used to sign the execution result.
         fn key(&self) -> Vec<u8> {
             pink::ext().derive_sr25519_key(b"signer"[..].into())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::ProvenRef;
+
+        use pink_drink::{PinkRuntime, SessionExt, DeployBundle, Callable};
+        use drink::session::Session;
+        use ink::codegen::TraitCallBuilder;
+
+        #[test]
+        fn run_js_works() -> Result<(), Box<dyn std::error::Error>> {
+            tracing_subscriber::fmt::init();
+            let mut session = Session::<PinkRuntime>::new()?;
+            session.set_driver("JsRuntime", &[0u8; 32])?;
+            let wasm = include_bytes!("./target/ink/proven.wasm").to_vec();
+            let contract_ref = ProvenRef::default().deploy_wasm(&wasm, &mut session)?;
+            let result = contract_ref.call().run_js("\"Hello\"".into(), vec![]).query(&mut session)?;
+            println!("payload: {}", result.unwrap().payload);
+            Ok(())
         }
     }
 }
