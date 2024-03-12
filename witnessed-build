@@ -7,7 +7,7 @@ install_toolchain() {
   echo "::endgroup::"
   PATH="$HOME/.cargo/bin:$PATH"
   echo "::group::Installing cargo-contract"
-  cargo install --locked cargo-contract --version=^3
+  cargo install --locked cargo-contract --git https://github.com/kvinwang/cargo-contract --rev f332b2115b8aa1744bec243b8fcc48ab928ad5bc
   echo "::endgroup::"
 }
 
