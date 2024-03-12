@@ -7,7 +7,7 @@
 extern crate alloc;
 
 #[ink::contract]
-mod proven {
+mod gpt_prover {
     use alloc::string::String;
     use alloc::vec::Vec;
     use pink::{chain_extension::SigType, system::SystemRef};
@@ -27,6 +27,15 @@ mod proven {
             serializer.serialize_str(&format!("0x{}", hex::encode(self.0.as_ref())))
         }
     }
+
+    #[derive(Encode, Decode, Debug)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        #[codec(index = 1)]
+        Unauthorized,
+    }
+
+    type Result<T, E=Error> = core::result::Result<T, E>;
 
     #[derive(Serialize)]
     /// Struct representing the signed payload.
@@ -49,14 +58,25 @@ mod proven {
     }
 
     #[ink(storage)]
-    pub struct Proven {}
+    pub struct GptProver {
+        owner: AccountId,
+        api_url: String,
+        api_key: String,
+    }
 
-    impl Proven {
+    impl GptProver {
         #[ink(constructor)]
-        pub fn default() -> Self {
-            Self {}
+        pub fn new(api_url: String, api_key: String) -> Self {
+            Self {
+                owner: Self::env().caller(),
+                api_url,
+                api_key,
+            }
         }
+    }
 
+    /// Queries the contract.
+    impl GptProver {
         #[ink(message)]
         /// Returns the public key.
         pub fn pubkey(&self) -> Vec<u8> {
@@ -64,19 +84,79 @@ mod proven {
         }
 
         #[ink(message)]
-        /// Executes the provided JavaScript code and returns the execution result and the hash of the code.
-        /// The output is signed with dedicated private key.
-        ///
-        /// # Arguments
-        ///
-        /// * `js_code` - The Javascript code to run
-        /// * `args` - The arguments to pass to the Javascript code
-        ///
-        /// @ui js_code widget codemirror
-        /// @ui js_code options.lang javascript
-        pub fn run_js(
+        /// Returns the current API URL.
+        pub fn api_url(&self) -> String {
+            self.api_url.clone()
+        }
+
+        #[ink(message)]
+        /// Ask given model a question.
+        pub fn ask_gpt(&self, model: String, prompt: String) -> Result<ProvenOutput, String> {
+            self.ask_openai(&model, &prompt)
+        }
+
+        #[ink(message)]
+        /// Ask GPT-4 a question.
+        pub fn ask_gpt4(&self, prompt: String) -> Result<ProvenOutput, String> {
+            self.ask_openai("gpt-4-turbo-preview", &prompt)
+        }
+
+        #[ink(message)]
+        /// Ask GPT-4 a question.
+        pub fn ask_gpt3n5(&self, prompt: String) -> Result<ProvenOutput, String> {
+            self.ask_openai("gpt-3.5-turbo-0125", &prompt)
+        }
+    }
+
+    /// Manages the contract owner's operations.
+    impl GptProver {
+        #[ink(message)]
+        /// Updates the API URL.
+        pub fn update_api_url(&mut self, new_url: String) -> Result<()> {
+            self.ensure_owner()?;
+            self.api_url = new_url;
+            Ok(())
+        }
+
+        #[ink(message)]
+        /// Updates the API key.
+        pub fn update_api_key(&mut self, new_key: String) -> Result<()> {
+            self.ensure_owner()?;
+            self.api_key = new_key;
+            Ok(())
+        }
+
+        #[ink(message)]
+        /// Transfer ownership to another account.
+        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<()> {
+            self.ensure_owner()?;
+            self.owner = new_owner;
+            Ok(())
+        }
+
+    }
+
+    use ink::codegen::Env;
+    impl GptProver {
+        fn ensure_owner(&self) -> Result<()> {
+            if self.env().caller() != self.owner {
+                return Err(Error::Unauthorized.into());
+            }
+            Ok(())
+        }
+
+        fn key(&self) -> Vec<u8> {
+            pink::ext().derive_sr25519_key(b"signer"[..].into())
+        }
+
+        fn ask_openai(&self, model: &str, prompt: &str) -> Result<ProvenOutput, String> {
+            const JS: &str = include_str!("askgpt.js");
+            self.run_js(JS, alloc::vec![self.api_url.clone(), self.api_key.clone(), model.into(), prompt.into()])
+        }
+
+        fn run_js(
             &self,
-            js_code: String,
+            js_code: &str,
             args: Vec<String>,
         ) -> Result<ProvenOutput, String> {
             use phat_js as js;
@@ -84,7 +164,7 @@ mod proven {
                 .env()
                 .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes())
                 .into();
-            let output = js::eval_async_js(&js_code, &args);
+            let output = js::eval_async_js(js_code, &args);
             let output = match output {
                 js::JsValue::String(s) => s,
                 _ => return Err(format!("Invalid output: {:?}", output)),
@@ -112,36 +192,11 @@ mod proven {
                 pubkey: self.pubkey(),
             })
         }
-
-        #[ink(message)]
-        /// Same as run_js except getting the code from given URL.
-        pub fn run_js_from_url(
-            &self,
-            code_url: String,
-            args: Vec<String>,
-        ) -> Result<ProvenOutput, String> {
-            let response = pink::http_get!(
-                code_url,
-                alloc::vec![("User-Agent".into(), "phat-contract".into())]
-            );
-            if (response.status_code / 100) != 2 {
-                return Err("Failed to get code".into());
-            }
-            let js_code = String::from_utf8(response.body).map_err(|_| "Invalid code")?;
-            self.run_js(js_code, args)
-        }
-    }
-
-    impl Proven {
-        /// Returns the key used to sign the execution result.
-        fn key(&self) -> Vec<u8> {
-            pink::ext().derive_sr25519_key(b"signer"[..].into())
-        }
     }
 
     #[cfg(test)]
     mod tests {
-        use super::ProvenRef;
+        use super::GptProverRef;
 
         use pink_drink::{PinkRuntime, SessionExt, DeployBundle, Callable};
         use drink::session::Session;
@@ -149,12 +204,17 @@ mod proven {
 
         #[test]
         fn run_js_works() -> Result<(), Box<dyn std::error::Error>> {
-            tracing_subscriber::fmt::init();
+            const OPENAI_APIKEY: &str = env!("OPENAI_APIKEY");
+            const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+
             let mut session = Session::<PinkRuntime>::new()?;
             session.set_driver("JsRuntime", &[0u8; 32])?;
+
             let wasm = include_bytes!("./target/ink/proven.wasm").to_vec();
-            let contract_ref = ProvenRef::default().deploy_wasm(&wasm, &mut session)?;
-            let result = contract_ref.call().run_js("\"Hello\"".into(), vec![]).query(&mut session)?;
+            let contract_ref = GptProverRef::new(OPENAI_URL.into(), OPENAI_APIKEY.into())
+                .deploy_wasm(&wasm, &mut session)?;
+
+            let result = contract_ref.call().ask_gpt3n5("What is asdf?".into()).query(&mut session)?;
             println!("payload: {}", result.unwrap().payload);
             Ok(())
         }

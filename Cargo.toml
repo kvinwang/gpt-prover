@@ -1,5 +1,5 @@
 [package]
-name = "proven"
+name = "gpt_prover"
 version = "0.1.0"
 authors = ["Kevin Wang <wy721@qq.com>"]
 edition = "2021"

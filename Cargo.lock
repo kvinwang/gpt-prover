@@ -2093,6 +2093,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
+name = "gpt_prover"
+version = "0.1.0"
+dependencies = [
+ "drink",
+ "hex",
+ "hex_fmt",
+ "ink",
+ "parity-scale-codec",
+ "phat_js",
+ "pink",
+ "pink-drink",
+ "pink-json",
+ "scale-info",
+ "serde",
+ "tracing-subscriber 0.3.18",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3958,24 +3976,6 @@ dependencies = [
  "syn 2.0.52",
  "version_check",
  "yansi",
-]
-
-[[package]]
-name = "proven"
-version = "0.1.0"
-dependencies = [
- "drink",
- "hex",
- "hex_fmt",
- "ink",
- "parity-scale-codec",
- "phat_js",
- "pink",
- "pink-drink",
- "pink-json",
- "scale-info",
- "serde",
- "tracing-subscriber 0.3.18",
 ]
 
 [[package]]
