@@ -9,6 +9,7 @@ ink = { version = "4", default-features = false, features = ["static-buffer-1M25
 pink = { version = "0.4", default-features = false, features = ["dlmalloc"] }
 phat_js = { version = "0.3", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
+hex_fmt = "0.3.0"
 
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = [
     "derive",
@@ -16,13 +17,23 @@ scale = { package = "parity-scale-codec", version = "3", default-features = fals
 scale-info = { version = "2.6", default-features = false, features = [
     "derive",
 ], optional = true }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+pink-json = { version = "0.4", default-features = false }
 
 [lib]
 path = "lib.rs"
 
 [features]
 default = ["std"]
-std = ["ink/std", "scale/std", "scale-info/std", "pink/std", "phat_js/std"]
+std = [
+    "ink/std",
+    "scale/std",
+    "scale-info/std",
+    "pink/std",
+    "phat_js/std",
+    "serde/std",
+    "pink-json/std",
+]
 ink-as-dependency = []
 e2e-tests = []
 

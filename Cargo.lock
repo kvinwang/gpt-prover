@@ -695,6 +695,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-json"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c146010528d0b4f6a3d3255ef2a179e8ef25a1114dfb75542becf89def7c5232"
+dependencies = [
+ "ryu",
+ "serde",
+]
+
+[[package]]
 name = "pink-macro"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -753,11 +763,14 @@ name = "proven"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "hex_fmt",
  "ink",
  "parity-scale-codec",
  "phat_js",
  "pink",
+ "pink-json",
  "scale-info",
+ "serde",
 ]
 
 [[package]]

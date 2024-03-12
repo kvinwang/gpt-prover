@@ -10,28 +10,42 @@ extern crate alloc;
 mod proven {
     use alloc::string::String;
     use alloc::vec::Vec;
-    use pink::{chain_extension::SigType, system::SystemRef, ConvertTo};
+    use pink::{chain_extension::SigType, system::SystemRef};
+    use serde::Serialize;
     use scale::{Decode, Encode};
 
-    #[derive(Encode, Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    struct Hexed<T>(T);
+
+    impl<T> From<T> for Hexed<T> {
+        fn from(t: T) -> Self {
+            Hexed(t)
+        }
+    }
+
+    impl<T: AsRef<[u8]>> Serialize for Hexed<T> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            format_args!("0x{}", hex_fmt::HexFmt(&self.0)).serialize(serializer)
+        }
+    }
+
+    #[derive(Serialize)]
     /// Struct representing the signed payload.
     pub struct ProvenPayload {
-        pub js_output: String,
-        pub js_code_hash: Hash,
-        pub js_engine_code_hash: Hash,
-        pub contract_code_hash: Hash,
-        pub contract_address: AccountId,
-        pub block_number: u32,
+        output: String,
+        js_code_hash: Hexed<Hash>,
+        js_engine_code_hash: Hexed<AccountId>,
+        contract_code_hash: Hexed<Hash>,
+        contract_address: Hexed<AccountId>,
+        block_number: u32,
     }
 
     #[derive(Encode, Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     /// Struct representing the output of a proven execution.
     pub struct ProvenOutput {
-        pub payload: ProvenPayload,
-        pub signature: Vec<u8>,
-        pub signing_pubkey: Vec<u8>,
+        payload: String,
+        signature: Vec<u8>,
+        pubkey: Vec<u8>,
     }
 
     #[ink(storage)]
@@ -66,12 +80,12 @@ mod proven {
             args: Vec<String>,
         ) -> Result<ProvenOutput, String> {
             use phat_js as js;
-            let js_code_hash = self
+            let js_code_hash: Hash = self
                 .env()
                 .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes())
                 .into();
             let output = js::eval_async_js(&js_code, &args);
-            let js_output = match output {
+            let output = match output {
                 js::JsValue::String(s) => s,
                 _ => return Err(format!("Invalid output: {:?}", output)),
             };
@@ -80,21 +94,22 @@ mod proven {
                 .get_driver("JsRuntime".into())
                 .expect("Failed to get Js driver");
             let payload = ProvenPayload {
-                js_code_hash,
-                js_engine_code_hash: driver.convert_to(),
+                js_code_hash: js_code_hash.into(),
+                js_engine_code_hash: driver.into(),
                 contract_code_hash: self
                     .env()
                     .own_code_hash()
-                    .expect("Failed to get contract code hash"),
-                contract_address: self.env().account_id(),
-                js_output,
+                    .expect("Failed to get contract code hash").into(),
+                contract_address: self.env().account_id().into(),
                 block_number: self.env().block_number(),
+                output,
             };
-            let signature = pink::ext().sign(SigType::Sr25519, &key, &payload.encode());
+            let payload_str = pink_json::to_string(&payload).expect("Failed to serialize payload");
+            let signature = pink::ext().sign(SigType::Sr25519, &key, &payload_str.as_bytes());
             Ok(ProvenOutput {
-                payload,
+                payload: payload_str,
                 signature,
-                signing_pubkey: self.pubkey(),
+                pubkey: self.pubkey(),
             })
         }
 
