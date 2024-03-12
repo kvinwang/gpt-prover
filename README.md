@@ -1,48 +1,28 @@
-# Proven
+# GPT Prover
 
-This is a smart contract designed to run on the Phala [Phat Contract](https://phat.phala.network/) platform. It provides a proof of code execution. When a user calls the `prove_output` method and passes in a piece of JavaScript code, the contract executes this code and outputs the execution result and the hash of the code as the result.
+This Phat Contract is a GPT prover that can be used to prove that a given openai GPT model was used to generate a given text.
 
-## Usage
+## Asking Questions to Different GPT Models
 
-### Proving Code Execution
-
-To prove the execution of a piece of code, call the `prove_output` method with the JavaScript code as the argument. The contract will execute the code and return the execution result and the hash of the code.
+The contract provides multiple entry points for asking questions or sending prompts to different versions of the GPT model. Depending on the desired model's complexity or capabilities, users can choose between general or specific functions like `ask_gpt`, `ask_gpt4`, or `ask_gpt3n5`.
 
 ```rust
-let js_code = r#"
-(function(){
-    const token = scriptArgs[0];
-    const message = scriptArgs[1];
-    const response = pink.httpRequest({
-        url: 'https://api.github.com/user',
-        headers: {
-            'Accept': 'application/vnd.github+json',
-            'Authorization': 'Bearer ' + token,
-            'X-GitHub-Api-Version': '2022-11-28',
-            'User-Agent': 'Phat-Script',
-        },
-        method: 'GET',
-        returnTextBody: true,
-    });
-    const json = JSON.parse(response.body);
-    return `Proven owned github user ${json.login}, date: ${response.headers.date}, message: ${message}`;
-}())
-"#;
+pub fn ask_gpt(&self, model: String, prompt: String) -> Result<ProvenOutput, String>
 
-let ProvenOutput {
-    payload,
-    signature,
-    signer_pubkey,
-} = contract.prove_output(js_code, vec!["<Your Github Access Token>".into(), "Moon".into()]).unwrap();
+pub fn ask_gpt4(&self, prompt: String) -> Result<ProvenOutput, String>
 
-let pubkey = contract.pubkey();
-assert!(sr25519::verify(&pubkey, &signature, &payload.encode()).is_ok());
+pub fn ask_gpt3n5(&self, prompt: String) -> Result<ProvenOutput, String>
 ```
 
-## Application Scenario
+## Deployed Contract
 
-This contract can be used to prove the identity, assets, and behavior records of users on centralized platforms. By providing a proof of code execution, it allows users to verify that certain actions have taken place.
+The contract is deployed on PoC6: [Address](https://phat.phala.network/contracts/view/0xb485627babb8c67a0bbdcfdb2e336a864fa9a1ca4393b52667467b2be18d63d3)
 
-## License
 
-This project is licensed under the [MIT License](LICENSE).
+You can the contract by opening the link above and picking up one of the available functions as show below:
+
+![alt text](assets/image.png)
+
+It would return a JSON object containing the output of the GPT model, other information about the runtime environment and the signature of the output.
+
+![alt text](assets/image-1.png)
