@@ -94,6 +94,19 @@ mod prover {
                 config,
             }
         }
+
+        #[ink(constructor)]
+        pub fn default() -> Self {
+            Self::new(Config::Public)
+        }
+
+        #[ink(constructor)]
+        pub fn with_secret(secret: String) -> Self {
+            Self::new(Config::WhiteList {
+                secret,
+                allowed_code_hashes: vec![],
+            })
+        }
     }
 
     /// Queries the contract.
