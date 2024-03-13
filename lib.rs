@@ -198,6 +198,19 @@ mod prover {
             Ok(())
         }
 
+        /// Updates the secret data.
+        #[ink(message)]
+        pub fn update_secret(&mut self, secret: String) -> Result<()> {
+            self.ensure_owner()?;
+            match &mut self.config {
+                Config::WhiteList { secret: s, .. } => {
+                    *s = secret;
+                }
+                _ => return Err(Error::BadConfig),
+            }
+            Ok(())
+        }
+
         /// Adds a code hash to the whitelist.
         #[ink(message)]
         pub fn allow_code_hash(&mut self, code_hash: Hash) -> Result<()> {
