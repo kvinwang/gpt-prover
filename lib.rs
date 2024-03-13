@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 //! This is a smart contract running on the Phala Phat Contract platform.
-//! It provides a proof of code execution. When the user calls the `prove_output` method and passes in a piece of JavaScript code,
+//! It provides a proof of code execution. When the user calls the `run_js` method and passes in a piece of JavaScript code,
 //! the contract executes this code and outputs the execution result and the hash of the code as the result.
 
 #[macro_use]
