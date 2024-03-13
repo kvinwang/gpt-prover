@@ -1,28 +1,22 @@
-# GPT Prover
+# JS Prover
 
-This Phat Contract is a GPT prover that can be used to prove that a given openai GPT model was used to generate a given text.
+The JS Prover is an adaptable contract designed for proving the legitimacy of outputs derived from JS code executions. This contract is especially beneficial when integrating with the AI model to verify the accuracy of generated outputs. It operates under two distinct modes: Public and Whitelisted, accommodating a broad range of use cases from open execution environments to more secure, restricted ones.
 
-## Asking Questions to Different GPT Models
+## Design Overview
+The evolution from the GptProver to the JS Prover represents a shift towards increased flexibility. The contract accepts JS code as input, executing it to produce a verifiable, signed output.
 
-The contract provides multiple entry points for asking questions or sending prompts to different versions of the GPT model. Depending on the desired model's complexity or capabilities, users can choose between general or specific functions like `ask_gpt`, `ask_gpt4`, or `ask_gpt3n5`.
+### Modes of Operation
 
-```rust
-pub fn ask_gpt(&self, model: String, prompt: String) -> Result<ProvenOutput, String>
+#### Public Mode
+- **Unrestricted Access:** Any JS code can be executed without limitations.
+- **No Secret Information:** Ensures no confidential data (e.g., API keys) is passed to the JS script during execution.
 
-pub fn ask_gpt4(&self, prompt: String) -> Result<ProvenOutput, String>
+#### Whitelisted Mode
+- **Execution Control:** Only pre-approved JS scripts are permitted to run, providing an additional layer of security.
+- **Owner Privileges:**
+  - **Whitelist Management:** The contract owner has the authority to manage which scripts are allowed.
+  - **Confidential Data Handling:** The owner can configure the contract to pass secret data (e.g., API keys) as arguments (`arg0`) to the whitelisted JS scripts, securing sensitive information.
 
-pub fn ask_gpt3n5(&self, prompt: String) -> Result<ProvenOutput, String>
-```
+## Usage Instructions
 
-## Deployed Contract
-
-The contract is deployed on PoC6: [Address](https://phat.phala.network/contracts/view/0xb485627babb8c67a0bbdcfdb2e336a864fa9a1ca4393b52667467b2be18d63d3)
-
-
-You can the contract by opening the link above and picking up one of the available functions as show below:
-
-![alt text](assets/image.png)
-
-It would return a JSON object containing the output of the GPT model, other information about the runtime environment and the signature of the output.
-
-![alt text](assets/image-1.png)
+Please refer to the provided test cases.

@@ -1,5 +1,5 @@
 [package]
-name = "gpt_prover"
+name = "js_prover"
 version = "0.1.0"
 authors = ["Kevin Wang <wy721@qq.com>"]
 edition = "2021"
@@ -24,6 +24,7 @@ pink-json = { version = "0.4", default-features = false }
 drink = "0.8"
 pink-drink = "0.1.4"
 tracing-subscriber = "0.3.18"
+sp-core = "30.0.0"
 
 [lib]
 path = "lib.rs"

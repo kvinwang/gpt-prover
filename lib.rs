@@ -7,12 +7,16 @@
 extern crate alloc;
 
 #[ink::contract]
-mod gpt_prover {
+mod prover {
     use alloc::string::String;
     use alloc::vec::Vec;
     use pink::{chain_extension::SigType, system::SystemRef};
     use serde::Serialize;
     use scale::{Decode, Encode};
+    use ink::codegen::Env;
+
+    #[cfg(feature = "std")]
+    use ink::storage::traits::StorageLayout;
 
     struct Hexed<T>(T);
 
@@ -33,6 +37,10 @@ mod gpt_prover {
     pub enum Error {
         #[codec(index = 1)]
         Unauthorized,
+        #[codec(index = 2)]
+        BadConfig,
+        #[codec(index = 3)]
+        JsError(String),
     }
 
     type Result<T, E=Error> = core::result::Result<T, E>;
@@ -57,117 +65,76 @@ mod gpt_prover {
         pubkey: Vec<u8>,
     }
 
-    #[ink(storage)]
-    pub struct GptProver {
-        owner: AccountId,
-        api_url: String,
-        api_key: String,
+    #[derive(Encode, Decode, Debug, Clone)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
+    pub enum Config {
+        Public,
+        WhiteList {
+            js_arg0: String,
+            allowed_code_hash: Vec<Hash>,
+        },
     }
 
-    impl GptProver {
+    #[ink(storage)]
+    pub struct JsProver {
+        owner: AccountId,
+        config: Config,
+    }
+
+    impl JsProver {
         #[ink(constructor)]
-        pub fn new(api_url: String, api_key: String) -> Self {
+        pub fn new(config: Config) -> Self {
             Self {
                 owner: Self::env().caller(),
-                api_url,
-                api_key,
+                config,
             }
         }
     }
 
     /// Queries the contract.
-    impl GptProver {
-        #[ink(message)]
+    impl JsProver {
         /// Returns the public key.
+        #[ink(message)]
         pub fn pubkey(&self) -> Vec<u8> {
             pink::ext().get_public_key(SigType::Sr25519, &self.key())
         }
 
+        /// Returns the contract's configuration.
         #[ink(message)]
-        /// Returns the current API URL.
-        pub fn api_url(&self) -> String {
-            self.api_url.clone()
-        }
-
-        #[ink(message)]
-        /// Ask given model a question.
-        pub fn ask_gpt(&self, model: String, prompt: String) -> Result<ProvenOutput, String> {
-            self.ask_openai(&model, &prompt)
-        }
-
-        #[ink(message)]
-        /// Ask GPT-4 a question.
-        pub fn ask_gpt4(&self, prompt: String) -> Result<ProvenOutput, String> {
-            self.ask_openai("gpt-4-turbo-preview", &prompt)
-        }
-
-        #[ink(message)]
-        /// Ask GPT-4 a question.
-        pub fn ask_gpt3n5(&self, prompt: String) -> Result<ProvenOutput, String> {
-            self.ask_openai("gpt-3.5-turbo-0125", &prompt)
-        }
-    }
-
-    /// Manages the contract owner's operations.
-    impl GptProver {
-        #[ink(message)]
-        /// Updates the API URL.
-        pub fn update_api_url(&mut self, new_url: String) -> Result<()> {
-            self.ensure_owner()?;
-            self.api_url = new_url;
-            Ok(())
-        }
-
-        #[ink(message)]
-        /// Updates the API key.
-        pub fn update_api_key(&mut self, new_key: String) -> Result<()> {
-            self.ensure_owner()?;
-            self.api_key = new_key;
-            Ok(())
-        }
-
-        #[ink(message)]
-        /// Transfer ownership to another account.
-        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<()> {
-            self.ensure_owner()?;
-            self.owner = new_owner;
-            Ok(())
-        }
-
-    }
-
-    use ink::codegen::Env;
-    impl GptProver {
-        fn ensure_owner(&self) -> Result<()> {
-            if self.env().caller() != self.owner {
-                return Err(Error::Unauthorized.into());
+        pub fn get_config(&self) -> Config {
+            let mut config =  self.config.clone();
+            match &mut config {
+                Config::WhiteList { js_arg0, allowed_code_hash: _ } => {
+                    if self.env().caller() != self.owner {
+                        js_arg0.clear();
+                    }
+                }
+                _ => {}
             }
-            Ok(())
+            config
         }
 
-        fn key(&self) -> Vec<u8> {
-            pink::ext().derive_sr25519_key(b"signer"[..].into())
-        }
-
-        fn ask_openai(&self, model: &str, prompt: &str) -> Result<ProvenOutput, String> {
-            const JS: &str = include_str!("askgpt.js");
-            self.run_js(JS, alloc::vec![self.api_url.clone(), self.api_key.clone(), model.into(), prompt.into()])
-        }
-
-        fn run_js(
+        /// Proves the output of a JavaScript code execution.
+        #[ink(message)]
+        pub fn run_js(
             &self,
-            js_code: &str,
+            js_code: String,
             args: Vec<String>,
-        ) -> Result<ProvenOutput, String> {
+        ) -> Result<ProvenOutput> {
             use phat_js as js;
             let js_code_hash: Hash = self
                 .env()
                 .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes())
                 .into();
-            let output = js::eval_async_js(js_code, &args);
+
+            self.ensure_code_allowed(&js_code_hash)?;
+            let mut args = args;
+            args.insert(0, self.js_config());
+
+            let output = js::eval_async_js(&js_code, &args);
             let output = match output {
                 js::JsValue::String(s) => s,
-                _ => return Err(format!("Invalid output: {:?}", output)),
+                _ => return Err(Error::JsError(format!("Invalid output: {:?}", output))),
             };
             let key = self.key();
             let driver = SystemRef::instance()
@@ -194,28 +161,124 @@ mod gpt_prover {
         }
     }
 
+    /// Manages the contract owner's operations.
+    impl JsProver {
+        /// Transfer ownership to another account.
+        #[ink(message)]
+        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<()> {
+            self.ensure_owner()?;
+            self.owner = new_owner;
+            Ok(())
+        }
+
+        /// Updates the contract's configuration.
+        #[ink(message)]
+        pub fn update_config(&mut self, config: Config) -> Result<()> {
+            self.ensure_owner()?;
+            self.config = config;
+            Ok(())
+        }
+
+        /// Adds a code hash to the whitelist.
+        #[ink(message)]
+        pub fn allow_code_hash(&mut self, code_hash: Hash) -> Result<()> {
+            self.ensure_owner()?;
+            match &mut self.config {
+                Config::WhiteList { allowed_code_hash, .. } => {
+                    allowed_code_hash.push(code_hash);
+                }
+                _ => return Err(Error::BadConfig),
+            }
+            Ok(())
+        }
+    }
+
+    impl JsProver {
+        fn ensure_owner(&self) -> Result<()> {
+            if self.env().caller() != self.owner {
+                return Err(Error::Unauthorized);
+            }
+            Ok(())
+        }
+
+        fn key(&self) -> Vec<u8> {
+            pink::ext().derive_sr25519_key(b"signer"[..].into())
+        }
+
+        fn ensure_code_allowed(&self, code_hash: &Hash) -> Result<()> {
+            let Config::WhiteList { allowed_code_hash, .. } = &self.config else {
+                return Ok(());
+            };
+            if !allowed_code_hash.contains(code_hash) {
+                return Err(Error::Unauthorized);
+            }
+            Ok(())
+        }
+
+        fn js_config(&self) -> String {
+            match &self.config {
+                Config::WhiteList { js_arg0, .. } => {
+                    js_arg0.clone()
+                }
+                _ => String::new(),
+            }
+        }
+
+    }
+
     #[cfg(test)]
     mod tests {
-        use super::GptProverRef;
+        use super::{JsProverRef, Config};
 
+        use alloc::vec;
         use pink_drink::{PinkRuntime, SessionExt, DeployBundle, Callable};
         use drink::session::Session;
         use ink::codegen::TraitCallBuilder;
 
         #[test]
         fn run_js_works() -> Result<(), Box<dyn std::error::Error>> {
+            tracing_subscriber::fmt::init();
             const OPENAI_APIKEY: &str = env!("OPENAI_APIKEY");
             const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+
+            let contract_code = include_bytes!("./target/ink/js_prover.wasm");
 
             let mut session = Session::<PinkRuntime>::new()?;
             session.set_driver("JsRuntime", &[0u8; 32])?;
 
-            let wasm = include_bytes!("./target/ink/proven.wasm").to_vec();
-            let contract_ref = GptProverRef::new(OPENAI_URL.into(), OPENAI_APIKEY.into())
-                .deploy_wasm(&wasm, &mut session)?;
+            let js_arg0 = format!(r#"{{
+                "openai": {{
+                    "apiKey": "{OPENAI_APIKEY}" ,
+                    "url": "{OPENAI_URL}"
+                }}
+            }}"#);
+            // Instantiate the contract.
+            let config = Config::WhiteList { js_arg0, allowed_code_hash: vec![] };
+            let mut contract_ref = JsProverRef::new(config)
+                .deploy_wasm(contract_code, &mut session)?;
 
-            let result = contract_ref.call().ask_gpt3n5("What is asdf?".into()).query(&mut session)?;
-            println!("payload: {}", result.unwrap().payload);
+            let js_code = include_str!("./askgpt.js");
+            // Add the contract's code hash to the whitelist.
+            let js_code_hash = sp_core::blake2_256(js_code.as_bytes());
+            contract_ref.call_mut().allow_code_hash(js_code_hash.into()).submit_tx(&mut session)?.unwrap();
+
+            // Call the `run_js` method.
+            let model = "gpt-3.5-turbo".to_string();
+            let prompt = "What is the meaning of life?".to_string();
+            let result = contract_ref.call().run_js(js_code.into(), vec![model, prompt]).query(&mut session)?;
+            let output = result.unwrap().payload;
+            println!("output: {}", output);
+
+            // To be convenient, let's print the result using js
+            let js_code = r#"
+                const output = JSON.parse(JSON.parse(scriptArgs[1]).output);
+                Sidevm.inspect('Output:', output);
+                const reply = JSON.parse(output.reply);
+                Sidevm.inspect('Reply:', reply);
+            "#;
+            let js_code_hash = sp_core::blake2_256(js_code.as_bytes());
+            contract_ref.call_mut().allow_code_hash(js_code_hash.into()).submit_tx(&mut session)?.unwrap();
+            let _result = contract_ref.call().run_js(js_code.into(), vec![output]).query(&mut session)?;
             Ok(())
         }
     }
