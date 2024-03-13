@@ -1,13 +1,11 @@
-const config = JSON.parse(scriptArgs[0]);
-const MODEL = scriptArgs[1];
-const PROMPT = scriptArgs[2];
+const config = JSON.parse(secretData);
+const MODEL = scriptArgs[0];
+const PROMPT = scriptArgs[1];
 
 const ENDPOINT = config.openai.url;
 const API_KEY = config.openai.apiKey;
 
 async function main() {
-    console.log(`OpenAI API: ${ENDPOINT}`);
-    console.log(`OpenAI API_KEY: ${API_KEY}`);
     const response = await fetch(ENDPOINT, {
         method: 'POST',
         headers: {
