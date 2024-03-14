@@ -16,8 +16,7 @@ mod prover {
     use scale::{Decode, Encode};
     use ink::codegen::Env;
 
-    #[cfg(feature = "std")]
-    use ink::storage::traits::StorageLayout;
+    use ink::storage::Mapping;
 
     struct Hexed<T>(T);
 
@@ -66,46 +65,19 @@ mod prover {
         pubkey: Vec<u8>,
     }
 
-    #[derive(Encode, Decode, Debug, Clone)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, StorageLayout))]
-    pub enum Config {
-        /// The contract is public, allowing any JavaScript code to be executed.
-        Public,
-        /// Allowing only the JavaScript code with the specified hash to be executed.
-        WhiteList {
-            /// The secret data to be passed to the JavaScript code, assigning to the `secretData` global variable.
-            secret: String,
-            /// The hash list of allowed JavaScript code to be executed.
-            allowed_code_hashes: Vec<Hash>,
-        },
-    }
-
     #[ink(storage)]
     pub struct JsProver {
         owner: AccountId,
-        config: Config,
+        secrets: Mapping<Hash, String>,
     }
 
     impl JsProver {
         #[ink(constructor)]
-        pub fn new(config: Config) -> Self {
+        pub fn default() -> Self {
             Self {
                 owner: Self::env().caller(),
-                config,
+                secrets: Mapping::new(),
             }
-        }
-
-        #[ink(constructor)]
-        pub fn default() -> Self {
-            Self::new(Config::Public)
-        }
-
-        #[ink(constructor)]
-        pub fn with_secret(secret: String) -> Self {
-            Self::new(Config::WhiteList {
-                secret,
-                allowed_code_hashes: vec![],
-            })
         }
     }
 
@@ -117,27 +89,13 @@ mod prover {
             pink::ext().get_public_key(SigType::Sr25519, &self.key())
         }
 
-        /// Returns the contract's configuration.
-        #[ink(message)]
-        pub fn get_config(&self) -> Config {
-            let mut config =  self.config.clone();
-            match &mut config {
-                Config::WhiteList { secret, allowed_code_hashes: _ } => {
-                    if self.env().caller() != self.owner {
-                        secret.clear();
-                    }
-                }
-                _ => {}
-            }
-            config
-        }
-
         /// Proves the output of a JavaScript code execution.
         ///
         /// # Arguments
         ///
-        /// * `js_code` - The Javascript code to run
-        /// * `args` - The arguments to pass to the Javascript code
+        /// * `js_code` - The Javascript code to run.
+        /// * `args` - The arguments to pass to the Javascript code.
+        /// * `secret` - The secretData passed to the JavaScript code as global variable `secretData`.
         ///
         /// @ui js_code widget codemirror
         /// @ui js_code options.lang javascript
@@ -146,6 +104,52 @@ mod prover {
             &self,
             js_code: String,
             args: Vec<String>,
+            secret: Option<String>,
+        ) -> Result<ProvenOutput> {
+            self.do_run_js(js_code, args, secret)
+        }
+    }
+
+    /// Manages the contract owner's operations.
+    impl JsProver {
+        /// Transfer ownership to another account.
+        #[ink(message)]
+        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<()> {
+            self.ensure_owner()?;
+            self.owner = new_owner;
+            Ok(())
+        }
+
+        /// Updates the secret data.
+        #[ink(message)]
+        pub fn set_secret(&mut self, for_code_hash: Hash, secret: String) -> Result<()> {
+            self.ensure_owner()?;
+            self.secrets.insert(for_code_hash, &secret);
+            Ok(())
+        }
+    }
+
+    impl JsProver {
+        fn ensure_owner(&self) -> Result<()> {
+            if self.env().caller() != self.owner {
+                return Err(Error::Unauthorized);
+            }
+            Ok(())
+        }
+
+        fn key(&self) -> Vec<u8> {
+            pink::ext().derive_sr25519_key(b"signer"[..].into())
+        }
+
+        fn secret_data(&self, code_hash: &Hash) -> String {
+            self.secrets.get(code_hash).unwrap_or_default()
+        }
+
+        pub fn do_run_js(
+            &self,
+            js_code: String,
+            args: Vec<String>,
+            secret: Option<String>
         ) -> Result<ProvenOutput> {
             use phat_js as js;
             let js_code_hash: Hash = self
@@ -153,14 +157,16 @@ mod prover {
                 .hash_bytes::<ink::env::hash::Blake2x256>(js_code.as_bytes())
                 .into();
 
-            self.ensure_code_allowed(&js_code_hash)?;
             let mut args = args;
-
-            args.push(self.secret_data());
-            let stub = "secretData = scriptArgs.pop();";
+            let secret = match secret {
+                Some(s) => s,
+                None => self.secret_data(&js_code_hash),
+            };
+            args.push(secret);
+            let init_script = "secretData = scriptArgs.pop();";
 
             let codes = vec![
-                JsCode::Source(stub.to_string()),
+                JsCode::Source(init_script.to_string()),
                 JsCode::Source(js_code),
             ];
             let output = pink::ext().js_eval(codes, args);
@@ -193,87 +199,9 @@ mod prover {
         }
     }
 
-    /// Manages the contract owner's operations.
-    impl JsProver {
-        /// Transfer ownership to another account.
-        #[ink(message)]
-        pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<()> {
-            self.ensure_owner()?;
-            self.owner = new_owner;
-            Ok(())
-        }
-
-        /// Updates the contract's configuration.
-        #[ink(message)]
-        pub fn update_config(&mut self, config: Config) -> Result<()> {
-            self.ensure_owner()?;
-            self.config = config;
-            Ok(())
-        }
-
-        /// Updates the secret data.
-        #[ink(message)]
-        pub fn update_secret(&mut self, secret: String) -> Result<()> {
-            self.ensure_owner()?;
-            match &mut self.config {
-                Config::WhiteList { secret: s, .. } => {
-                    *s = secret;
-                }
-                _ => return Err(Error::BadConfig),
-            }
-            Ok(())
-        }
-
-        /// Adds a code hash to the whitelist.
-        #[ink(message)]
-        pub fn allow_code_hash(&mut self, code_hash: Hash) -> Result<()> {
-            self.ensure_owner()?;
-            match &mut self.config {
-                Config::WhiteList { allowed_code_hashes, .. } => {
-                    allowed_code_hashes.push(code_hash);
-                }
-                _ => return Err(Error::BadConfig),
-            }
-            Ok(())
-        }
-    }
-
-    impl JsProver {
-        fn ensure_owner(&self) -> Result<()> {
-            if self.env().caller() != self.owner {
-                return Err(Error::Unauthorized);
-            }
-            Ok(())
-        }
-
-        fn key(&self) -> Vec<u8> {
-            pink::ext().derive_sr25519_key(b"signer"[..].into())
-        }
-
-        fn ensure_code_allowed(&self, code_hash: &Hash) -> Result<()> {
-            let Config::WhiteList { allowed_code_hashes, .. } = &self.config else {
-                return Ok(());
-            };
-            if !allowed_code_hashes.contains(code_hash) {
-                return Err(Error::Unauthorized);
-            }
-            Ok(())
-        }
-
-        fn secret_data(&self) -> String {
-            match &self.config {
-                Config::WhiteList { secret, .. } => {
-                    secret.clone()
-                }
-                _ => String::new(),
-            }
-        }
-
-    }
-
     #[cfg(test)]
     mod tests {
-        use super::{JsProverRef, Config};
+        use super::JsProverRef;
 
         use alloc::vec;
         use pink_drink::{PinkRuntime, SessionExt, DeployBundle, Callable};
@@ -292,25 +220,25 @@ mod prover {
             session.set_driver("JsRuntime", &[0u8; 32])?;
 
             let secret = format!(r#"{{
-                "openai": {{
-                    "apiKey": "{OPENAI_APIKEY}" ,
-                    "url": "{OPENAI_URL}"
-                }}
+                "url": "{OPENAI_URL}",
+                "apiKey": "{OPENAI_APIKEY}"
             }}"#);
             // Instantiate the contract.
-            let config = Config::WhiteList { secret, allowed_code_hashes: vec![] };
-            let mut contract_ref = JsProverRef::new(config)
+            let mut contract_ref = JsProverRef::default()
                 .deploy_wasm(contract_code, &mut session)?;
 
-            let js_code = include_str!("./askgpt.js");
-            // Add the contract's code hash to the whitelist.
+            let js_code = include_str!("./ask-gpt.js");
+            // Set the secret data for ask-gpt.js.
             let js_code_hash = sp_core::blake2_256(js_code.as_bytes());
-            contract_ref.call_mut().allow_code_hash(js_code_hash.into()).submit_tx(&mut session)?.unwrap();
+            contract_ref.call_mut().set_secret(js_code_hash.into(), secret).submit_tx(&mut session)?.unwrap();
 
             // Call the `run_js` method.
             let model = "gpt-3.5-turbo-0125".to_string();
             let prompt = "What is the meaning of life?".to_string();
-            let result = contract_ref.call().run_js(js_code.into(), vec![model, prompt]).query(&mut session)?;
+            let result = contract_ref
+                .call()
+                .run_js(js_code.into(), vec![model, prompt], None)
+                .query(&mut session)?;
             let output = result.unwrap().payload;
             println!("output: {}", output);
 
@@ -321,9 +249,10 @@ mod prover {
                 const reply = JSON.parse(output.reply);
                 Sidevm.inspect('Reply:', reply);
             "#;
-            let js_code_hash = sp_core::blake2_256(js_code.as_bytes());
-            contract_ref.call_mut().allow_code_hash(js_code_hash.into()).submit_tx(&mut session)?.unwrap();
-            let _result = contract_ref.call().run_js(js_code.into(), vec![output]).query(&mut session)?;
+            let _result = contract_ref
+                .call()
+                .run_js(js_code.into(), vec![output], None)
+                .query(&mut session)?;
             Ok(())
         }
     }

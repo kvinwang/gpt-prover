@@ -1,9 +1,9 @@
-const config = JSON.parse(secretData);
+const secret = JSON.parse(secretData);
 const MODEL = scriptArgs[0];
 const PROMPT = scriptArgs[1];
 
-const ENDPOINT = config.openai.url;
-const API_KEY = config.openai.apiKey;
+const ENDPOINT = secret.url;
+const API_KEY = secret.apiKey;
 
 async function main() {
     const response = await fetch(ENDPOINT, {
@@ -32,7 +32,7 @@ async function main() {
         model: MODEL,
         prompt: PROMPT,
         status: response.status,
-        reply: reply,
+        reply,
     });
 }
 
